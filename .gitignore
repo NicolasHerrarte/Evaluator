@@ -1,0 +1,16 @@
+# VS Code files
+.vscode/
+
+# Visual Studio temporary files
+.vs/
+
+# Ignore executable files
+*.exe
+
+# Build artifacts
+*.o
+*.obj
+*.out
+
+# Keep the output directory structure but ignore the files
+!output/.gitkeep
