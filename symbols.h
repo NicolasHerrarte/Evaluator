@@ -1,36 +1,8 @@
-#include "hash.h"
-#include "allocator.h"
+#include "usetypes.h"
 
 #define SYMBOLS_CHUNK_SIZE 128
 #define DYNADICT_DEFAULT_CAPACITY 512
-#define STORAGE_NAME_CAPACITY 10
-
-enum AnyEnum{
-    UNDEFINED_TYPE,
-    INT_TYPE,
-    FLOAT_TYPE,
-    PTR_TYPE
-};
-
-typedef struct AnyType{
-    enum AnyEnum tag;
-    void* aptr;
-} AnyType;
-
-typedef struct SymbolsTable{
-    Hash* hash;
-    struct SymbolsTable* parent;
-    struct SymbolsTable* sibling;
-    struct SymbolsTable* child;
-} SymbolsTable;
-
-typedef struct SymbolsManager{
-    Arena* arena;
-    Hash* index_hash;
-    SymbolsTable* root;
-    SymbolsTable** stack;
-    int attribute_capacity;
-} SymbolsManager;
+#define LOCAL_ARENA_SIZE 1024
 
 void print_symbols_table(SymbolsManager* manager, SymbolsTable* table, char* st_name, int depth);
 SymbolsTable* initializeScope(SymbolsManager* manager, int dynadict_capacity);
