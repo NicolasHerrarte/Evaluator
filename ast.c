@@ -166,14 +166,20 @@ void destroyAST(TreeManager tm){
     arena_destroy(tm.arena);
 }
 
-void print_ast(ASTNode node, char* prefix, bool is_last) {
+void export_ast(FILE* stream_out, ASTNode node, char* prefix, bool is_last, char** ast_val_map) {
     if (prefix[0] != '\0') {
-        printf("%s%s", prefix, is_last ? "└── " : "├── ");
+        fprintf(stream_out, "%s%s", prefix, is_last ? "└── " : "├── ");
     }
 
     if (node.tag == NODE) {
         InternalNode* internal = node.storage.node;
-        printf("[NODE] Type: %d\n", internal->type);
+        if(ast_val_map){
+            fprintf(stream_out, "[NODE] Type: %s\n", ast_val_map[internal->type]);
+        }
+        else{
+            fprintf(stream_out, "[NODE] Type: %d\n", internal->type);
+        }
+        
 
         char next_prefix[512];
         if (prefix[0] == '\0') {
@@ -195,7 +201,7 @@ void print_ast(ASTNode node, char* prefix, bool is_last) {
             // Recurse using the current node
             // Note: We pass *current because your print_ast likely expects the struct, 
             // or current if it expects a pointer.
-            print_ast(*current, actual_prefix, last_child);
+            export_ast(stream_out, *current, actual_prefix, last_child, ast_val_map);
 
             // Move to the next sibling
             current = current->sibling;
@@ -203,11 +209,21 @@ void print_ast(ASTNode node, char* prefix, bool is_last) {
     } 
     else if (node.tag == BOX) {
         Box* b = node.storage.box;
-        if (b->wrapper == ID_WRAPPER) printf("[ID] %s\n", b->value.bstring);
-        else if (b->wrapper == INT_WRAPPER) printf("[INT] %d\n", b->value.bint);
-        else if (b->wrapper == BOOL_WRAPPER) printf("[BOOL] %d\n", b->value.bint);
-        else if (b->wrapper == FLOAT_WRAPPER) printf("[FLOAT] %.2f\n", b->value.bfloat);
-        else if (b->wrapper == STRING_WRAPPER) printf("[STR] %s\n", b->value.bstring);
-        else if (b->wrapper == TYPE_WRAPPER) printf("[TYPE] %d\n", b->value.bint);
+        if (b->wrapper == ID_WRAPPER) fprintf(stream_out, "[ID] %s\n", b->value.bstring);
+        else if (b->wrapper == INT_WRAPPER) fprintf(stream_out, "[INT] %d\n", b->value.bint);
+        else if (b->wrapper == BOOL_WRAPPER) fprintf(stream_out, "[BOOL] %d\n", b->value.bint);
+        else if (b->wrapper == FLOAT_WRAPPER) fprintf(stream_out, "[FLOAT] %.2f\n", b->value.bfloat);
+        else if (b->wrapper == STRING_WRAPPER) fprintf(stream_out, "[STR] %s\n", b->value.bstring);
+        else if (b->wrapper == TYPE_WRAPPER) fprintf(stream_out, "[TYPE] %d\n", b->value.bint);
+    }
+
+    else if (node.tag == LABEL) {
+        char* label_name = node.storage.label;
+        fprintf(stream_out, "LABEL[%s]\n", label_name);
     }
 }
+
+void print_ast(ASTNode node, char* prefix, bool is_last, char** ast_val_map) {
+    export_ast(stdout, node, prefix, is_last, ast_val_map);
+}
+

@@ -6,4 +6,4 @@
 #include "symbols.h"
 
 bool type_equals(Type a, Type b);
-AnyType evaluate(SymbolsManager* manager, ASTNode* node);
+EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena);

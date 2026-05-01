@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <string.h>
 #include "allocator.h"
 
 Arena* arena_create(size_t arena_size){
@@ -67,7 +68,9 @@ void arena_destroy(Arena* header){
     if(header->next != NULL){
         arena_destroy(header->next);
     }
-
+    
+    // poisoning
+    memset(_get_storage(header), 0xDE, header->occupied);
     free(header);
 }
 

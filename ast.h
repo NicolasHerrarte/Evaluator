@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include "allocator.h"
 
-
 #define ARENA_CHUNK_SIZE 1024
 #define ROOT_TYPE 0
 
@@ -72,4 +71,6 @@ int get_children_count(ASTNode node);
 
 TreeManager initializeAST();
 void destroyAST(TreeManager tm);
-void print_ast(ASTNode node, char* prefix, bool is_last);
+
+void export_ast(FILE* stream_out, ASTNode node, char* prefix, bool is_last, char** ast_val_map);
+void print_ast(ASTNode node, char* prefix, bool is_last, char** ast_val_map);

@@ -4,23 +4,30 @@
 #define MAX_DIMS 4
 #define STORAGE_NAME_CAPACITY 10
 
+#define LOCAL_ARENA_SIZE 1024
+#define GLOBAL_ARENA_SIZE 4136
+
 enum NodeClass{
     STATLIST,
     IFNODE,
     WHILENODE,
     FORNODE,
     VARDECL,
+    ASSIGNSTORAGE,
+    ARRINST,
     FUNCDECL,
     VARASSIGN,
+    PRIMITIVETYPE,
     ARRTYPE,
     BREAK,
     CONTINUE,
     RETURN,
-    GOTO,
     ARGUMENTS,
     PARAMETERS,
     UNIPARAM,
-    EXPRESSION,
+    LOGICOR,
+    LOGICAND,
+    COMPNODE,
     SUM,
     SUBTRACT,
     MULT,
@@ -31,11 +38,23 @@ enum NodeClass{
 };
 
 typedef enum {
+    SIGNAL_BREAK,
+    SIGNAL_CONTINUE,
+    SIGNAL_RETURN,
+} SignalTag;
+
+typedef enum {
     VAR_TYPE_INT, 
-    VAR_TYPE_FLOAT,
     VAR_TYPE_BOOL, 
+    VAR_TYPE_FLOAT,
     VAR_TYPE_STRING,
+    VAR_TYPE_VOID,
 } TypeTag;
+
+typedef enum {
+    PARAMETER_MODE, 
+    ARGUMENT_MODE, 
+} ArgMode;
 
 typedef enum {
     KIND_PRIMITIVE,
@@ -44,7 +63,6 @@ typedef enum {
 
 typedef struct Type {
     TypeKind kind;
-    int size;
     union {
         TypeTag primitive_tag;
         struct {
@@ -68,7 +86,7 @@ typedef struct VValue {
     enum ValTag vv_tag;
     union {
         int    value_int;
-        double value_float;
+        float value_float;
         bool   value_bool;
         char  *value_string;
         void  *value_ptr;
@@ -80,21 +98,55 @@ typedef struct Variable {
     VValue storage;
 } Variable;
 
+typedef struct Signal {
+    SignalTag signal;
+    struct Variable variable;
+} Signal;
+
+typedef struct Argument {
+    ArgMode mode;
+    Type argtype;
+    union {
+        char* name;
+        VValue value;
+    };
+} Argument;
+
+typedef struct Args {
+    ArgMode mode;
+    Argument* list;
+    int amount;
+} Args;
+
+typedef struct Identifier {
+    char* name;
+    VValue storage;
+} Identifier;
+
 enum AnyEnum{
     UNDEFINED_TYPE,
     VALUE_TYPE,
     VART_TYPE,
     VARIABLE_TYPE,
+    SPAR_TYPE,
+    ARGS_TYPE,
+    SIGNAL_TYPE,
+    IDENTIFIER_TYPE,
 };
 
-typedef struct AnyType{
+typedef struct EvalPass{
     enum AnyEnum tag;
     union {
         VValue as_value;
         Type as_vart;
         Variable as_variable;
+        Argument as_spar;
+        Args as_args;
+        Signal as_signal;
+        Identifier as_identifier;
     };
-} AnyType;
+    enum NodeClass nclass;
+} EvalPass;
 
 //Don't Touch
 
@@ -103,11 +155,11 @@ typedef struct SymbolsTable{
     struct SymbolsTable* parent;
     struct SymbolsTable* sibling;
     struct SymbolsTable* child;
-    Arena* local_arena;
 } SymbolsTable;
 
 typedef struct SymbolsManager{
     Arena* arena;
+    Arena* global_arena;
     Hash* index_hash;
     SymbolsTable* root;
     SymbolsTable** stack;
