@@ -50,6 +50,7 @@ typedef enum {
     VAR_TYPE_FLOAT,
     VAR_TYPE_STRING,
     VAR_TYPE_VOID,
+    VAR_TYPE_GENERIC,
 } TypeTag;
 
 typedef enum {

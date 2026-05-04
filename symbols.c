@@ -109,6 +109,17 @@ void setAttributeIdentifier(SymbolsManager* manager, char* identifier, char* att
     (storage_ptr)[*storage_index] = record;
 }
 
+VValue* getAttributeIdentifier(SymbolsManager* manager, char* identifier, char* attribute){
+    VValue* storage_ptr = getIdentifierStorage(manager, identifier);
+    int* storage_index = dynadict_get(manager->index_hash, attribute);
+
+    assert(storage_index != NULL);
+    assert(*storage_index >= 0);
+    assert(*storage_index < manager->attribute_capacity);
+
+    return &(storage_ptr)[*storage_index];
+}
+
 VValue getAttributeStorage(SymbolsManager* manager, VValue* storage_ptr, char* attribute){
     int* storage_index = dynadict_get(manager->index_hash, attribute);
 
@@ -134,9 +145,6 @@ void createAttribute(SymbolsManager* manager, char* attribute, int value){
 }
 
 VValue* findStorage(SymbolsManager* manager, char* identifier, char* attribute){
-    // This is kind of a little dangerous bc the hash is stored as an obj but, the function only calls the attributes
-    // Changing the hash function might be a next step
-
     SymbolsTable* current_scope = dynarray_get_last(manager->stack);
     VValue** storage = dynadict_get(current_scope->hash, identifier);
 
@@ -169,7 +177,7 @@ VValue* findStorage(SymbolsManager* manager, char* identifier, char* attribute){
 SymbolsManager* initializeSymbols(int attr_cap, bool ini_production){
     SymbolsManager* manager = malloc(sizeof(SymbolsManager));
     manager->arena = arena_create(SYMBOLS_CHUNK_SIZE*(sizeof(SymbolsTable)+sizeof(Hash)));
-    manager->global_arena = arena_create(LOCAL_ARENA_SIZE);
+    manager->global_arena = arena_create(GLOBAL_ARENA_SIZE);
     manager->stack = dynarray_create(SymbolsTable*);
     manager->root = initializeScope(manager, DYNADICT_DEFAULT_CAPACITY);
     //Hash* index_hash_storage = arena_get(manager->arena, sizeof(Hash));

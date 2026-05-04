@@ -8,6 +8,8 @@
 #define FLOAT_MACRO_TYPE (Type){.kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_FLOAT}
 #define BOOL_MACRO_TYPE (Type){.kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_BOOL}
 #define STRING_MACRO_TYPE (Type){.kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_STRING}
+#define VOID_MACRO_TYPE (Type){.kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_VOID}
+#define GENERIC_MACRO_TYPE (Type){.kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_GENERIC}
 
 #define EPSILON_FLOAT_COMP 0.0001f
 
@@ -37,6 +39,9 @@ bool type_equals(Type a, Type b) {
 
     switch (a.kind) {
         case KIND_PRIMITIVE:
+            if (a.primitive_tag == VAR_TYPE_GENERIC || b.primitive_tag == VAR_TYPE_GENERIC)
+                return true;
+
             return a.primitive_tag == b.primitive_tag;
 
         case KIND_ARRAY:
@@ -414,6 +419,7 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     assert(var_type.tag == VART_TYPE);
 
                     assert(var_type.as_vart.primitive_tag != VAR_TYPE_VOID);
+                    assert(var_type.as_vart.primitive_tag != VAR_TYPE_GENERIC);
 
                     char * id_char = identifier.as_value.value_string;
 
@@ -1252,7 +1258,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                 }
             }
             break;
-
+        case EXTERNAL:
+            node->storage.external_func(manager);
+            break;
         case LABEL:
             printf("There should be no labels\n");
             assert(false);
@@ -1275,6 +1283,57 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
     return action;
 }
 
+void print_execute(void* manager_void, ...){
+    SymbolsManager* manager = (SymbolsManager*) manager_void;
+
+    VValue generic_print = *getAttributeIdentifier(manager, "generic_print", "value");
+
+    switch (generic_print.vv_tag) {
+        case VV_INT:
+            printf("%d\n", generic_print.value_int);
+            break;
+        case VV_FLOAT:
+            printf("%.2f\n", generic_print.value_float);
+            break;
+        case VV_BOOL:
+            printf("%s\n", generic_print.value_bool ? "true" : "false");
+            break;
+        case VV_STRING:
+            printf("%s\n", generic_print.value_string ? generic_print.value_string : "null");
+            break;
+        case VV_PTR:
+            printf("ptr(%p)\n", generic_print.value_ptr);
+            break;
+        default:
+            printf("Unsuported type for print function");
+            assert(false);
+            break;
+    }
+}
+
+void print_define(SymbolsManager* manager){
+    Type* void_type_storage = (Type*) arena_get(manager->global_arena, sizeof(Args));
+    *void_type_storage = VOID_MACRO_TYPE;
+    initializeIdentifier(manager, "print");
+    setAttributeIdentifier(manager, "print", "type", (VValue){ .vv_tag = VV_PTR, .value_ptr = void_type_storage});
+
+    Argument* argument = (Argument*) arena_get(manager->global_arena, sizeof(Argument));
+    argument->mode = PARAMETER_MODE;
+    argument->name = "generic_print";
+    argument->argtype = GENERIC_MACRO_TYPE;
+    Args* args_storage = (Args*) arena_get(manager->global_arena, sizeof(Args));
+    args_storage->mode = PARAMETER_MODE;
+    args_storage->list = argument;
+    args_storage->amount = 1;
+    setAttributeIdentifier(manager, "print", "params", (VValue){ .vv_tag = VV_PTR, .value_ptr = args_storage });
+
+    ASTNode* external_node = (ASTNode*) arena_get(manager->global_arena, sizeof(ASTNode));
+    external_node->tag = EXTERNAL;
+    external_node->sibling = NULL;
+    external_node->storage.external_func = print_execute;
+    setAttributeIdentifier(manager, "print", "value", (VValue){ .vv_tag = VV_PTR, .value_ptr = external_node});
+}
+
 SymbolsManager* create_symbols_manager(bool production){
     SymbolsManager* manager = initializeSymbols(3, production);
     createAttribute(manager, "type",    0);
@@ -1286,9 +1345,9 @@ SymbolsManager* create_symbols_manager(bool production){
 
 void calculate_tree(TreeManager tree_manager, bool production){
     SymbolsManager* symbols_manager = create_symbols_manager(production);
+    print_define(symbols_manager);
 
-    Arena* global_arena = arena_create(GLOBAL_ARENA_SIZE);
-    evaluate(symbols_manager, &tree_manager.root, global_arena);
+    evaluate(symbols_manager, &tree_manager.root, symbols_manager->global_arena);
 }
 
 void test_symbols_table_tree(void) {
@@ -1331,185 +1390,51 @@ void test_symbols_table_tree(void) {
 
 void test_evaluator(void) {
     TreeManager tm = initializeAST();
-
-    // proc makeArr() -> int[] { ... }
-    ASTNode makeArr_label = create_label(tm.arena, "makeArr", 7);
-    ASTNode makeArr_id = create_box(tm.arena, ID_M, makeArr_label);
-
-    // empty parameters
-    ASTNode parameters = create_node(tm.arena, PARAMETERS, NULL, 0);
-
-    // return type: int[]
-    ASTNode ret_type_val = create_value_box(tm.arena, 0);
-    ASTNode ret_type_children[] = {ret_type_val};
-    ASTNode ret_prim = create_node(tm.arena, PRIMITIVETYPE, ret_type_children, 1);
-    ASTNode ret_arrtype_children[] = {ret_prim};
-    ASTNode ret_arrtype = create_node(tm.arena, ARRTYPE, ret_arrtype_children, 1);
-
-    // --- function body ---
-
-    // init int[] arr <- assign int[3];
-    ASTNode arr_type_val = create_value_box(tm.arena, 0);
-    ASTNode arr_type_children[] = {arr_type_val};
-    ASTNode arr_prim = create_node(tm.arena, PRIMITIVETYPE, arr_type_children, 1);
-    ASTNode arrtype_children[] = {arr_prim};
-    ASTNode arrtype = create_node(tm.arena, ARRTYPE, arrtype_children, 1);
-    ASTNode arr_label = create_label(tm.arena, "arr", 3);
-    ASTNode arr_id = create_box(tm.arena, ID_M, arr_label);
-    ASTNode inst_type = create_value_box(tm.arena, 0);
-    ASTNode three_label = create_label(tm.arena, "3", 1);
-    ASTNode three = create_box(tm.arena, INT_M, three_label);
-    ASTNode arrinst_children[] = {inst_type, three};
-    ASTNode arrinst = create_node(tm.arena, ARRINST, arrinst_children, 2);
-    ASTNode assignstorage_children[] = {arrinst};
-    ASTNode assignstorage = create_node(tm.arena, ASSIGNSTORAGE, assignstorage_children, 1);
-    ASTNode arr_decl_children[] = {arrtype, arr_id, assignstorage};
-    ASTNode arr_decl = create_node(tm.arena, VARDECL, arr_decl_children, 3);
-
-    // arr[0] = 10;
-    ASTNode arr0_label = create_label(tm.arena, "arr", 3);
-    ASTNode arr0_id = create_box(tm.arena, ID_M, arr0_label);
-    ASTNode arr0_access_children[] = {arr0_id};
-    ASTNode arr0_access = create_node(tm.arena, ACCESS, arr0_access_children, 1);
-    ASTNode idx0_label = create_label(tm.arena, "0", 1);
-    ASTNode idx0 = create_box(tm.arena, INT_M, idx0_label);
-    ASTNode arraccess0_children[] = {arr0_access, idx0};
-    ASTNode arraccess0 = create_node(tm.arena, ARRACCESS, arraccess0_children, 2);
-    ASTNode ten_label = create_label(tm.arena, "10", 2);
-    ASTNode ten = create_box(tm.arena, INT_M, ten_label);
-    ASTNode assign0_children[] = {arraccess0, ten};
-    ASTNode assign0 = create_node(tm.arena, VARASSIGN, assign0_children, 2);
-
-    // arr[1] = 20;
-    ASTNode arr1_label = create_label(tm.arena, "arr", 3);
-    ASTNode arr1_id = create_box(tm.arena, ID_M, arr1_label);
-    ASTNode arr1_access_children[] = {arr1_id};
-    ASTNode arr1_access = create_node(tm.arena, ACCESS, arr1_access_children, 1);
-    ASTNode idx1_label = create_label(tm.arena, "1", 1);
-    ASTNode idx1 = create_box(tm.arena, INT_M, idx1_label);
-    ASTNode arraccess1_children[] = {arr1_access, idx1};
-    ASTNode arraccess1 = create_node(tm.arena, ARRACCESS, arraccess1_children, 2);
-    ASTNode twenty_label = create_label(tm.arena, "20", 2);
-    ASTNode twenty = create_box(tm.arena, INT_M, twenty_label);
-    ASTNode assign1_children[] = {arraccess1, twenty};
-    ASTNode assign1 = create_node(tm.arena, VARASSIGN, assign1_children, 2);
-
-    // arr[2] = 30;
-    ASTNode arr2_label = create_label(tm.arena, "arr", 3);
-    ASTNode arr2_id = create_box(tm.arena, ID_M, arr2_label);
-    ASTNode arr2_access_children[] = {arr2_id};
-    ASTNode arr2_access = create_node(tm.arena, ACCESS, arr2_access_children, 1);
-    ASTNode idx2_label = create_label(tm.arena, "2", 1);
-    ASTNode idx2 = create_box(tm.arena, INT_M, idx2_label);
-    ASTNode arraccess2_children[] = {arr2_access, idx2};
-    ASTNode arraccess2 = create_node(tm.arena, ARRACCESS, arraccess2_children, 2);
-    ASTNode thirty_label = create_label(tm.arena, "30", 2);
-    ASTNode thirty = create_box(tm.arena, INT_M, thirty_label);
-    ASTNode assign2_children[] = {arraccess2, thirty};
-    ASTNode assign2 = create_node(tm.arena, VARASSIGN, assign2_children, 2);
-
-    // return arr;
-    ASTNode arr_ret_label = create_label(tm.arena, "arr", 3);
-    ASTNode arr_ret = create_box(tm.arena, ID_M, arr_ret_label);
-    ASTNode arr_ret_access_children[] = {arr_ret};
-    ASTNode arr_ret_access = create_node(tm.arena, ACCESS, arr_ret_access_children, 1);
-    ASTNode return_children[] = {arr_ret_access};
-    ASTNode ret = create_node(tm.arena, RETURN, return_children, 1);
-
-    // function body
-    ASTNode body_children[] = {arr_decl, assign0, assign1, assign2, ret};
-    ASTNode body = create_node(tm.arena, STATLIST, body_children, 5);
-
-    // funcdecl
-    ASTNode funcdecl_children[] = {makeArr_id, parameters, ret_arrtype, body};
-    ASTNode funcdecl = create_node(tm.arena, FUNCDECL, funcdecl_children, 4);
-
-    // --- init int[] result <- makeArr(); ---
-    ASTNode res_type_val = create_value_box(tm.arena, 0);
-    ASTNode res_type_children[] = {res_type_val};
-    ASTNode res_prim = create_node(tm.arena, PRIMITIVETYPE, res_type_children, 1);
-    ASTNode res_arrtype_children[] = {res_prim};
-    ASTNode res_arrtype = create_node(tm.arena, ARRTYPE, res_arrtype_children, 1);
-    ASTNode res_label = create_label(tm.arena, "result", 6);
-    ASTNode res_id = create_box(tm.arena, ID_M, res_label);
-    ASTNode makeArr_ref_label = create_label(tm.arena, "makeArr", 7);
-    ASTNode makeArr_ref = create_box(tm.arena, ID_M, makeArr_ref_label);
-    ASTNode makeArr_access_children[] = {makeArr_ref};
-    ASTNode makeArr_access = create_node(tm.arena, ACCESS, makeArr_access_children, 1);
-    ASTNode arguments = create_node(tm.arena, ARGUMENTS, NULL, 0);
-    ASTNode funccall_children[] = {makeArr_access, arguments};
-    ASTNode funccall = create_node(tm.arena, FUNCCALL, funccall_children, 2);
-    ASTNode res_decl_children[] = {res_arrtype, res_id, funccall};
-    ASTNode res_decl = create_node(tm.arena, VARDECL, res_decl_children, 3);
-
-    // --- init int a <- result[0]; ---
+    
+    // init int a <- 5;
     ASTNode a_type_val = create_value_box(tm.arena, 0);
     ASTNode a_type_children[] = {a_type_val};
-    ASTNode a_prim = create_node(tm.arena, PRIMITIVETYPE, a_type_children, 1);
+    ASTNode a_prim_type = create_node(tm.arena, PRIMITIVETYPE, a_type_children, 1);
     ASTNode a_label = create_label(tm.arena, "a", 1);
     ASTNode a_id = create_box(tm.arena, ID_M, a_label);
-    ASTNode arr_a_label = create_label(tm.arena, "result", 6);
-    ASTNode arr_a_id = create_box(tm.arena, ID_M, arr_a_label);
-    ASTNode arr_a_access_children[] = {arr_a_id};
-    ASTNode arr_a_access = create_node(tm.arena, ACCESS, arr_a_access_children, 1);
-    ASTNode idx_a_label = create_label(tm.arena, "0", 1);
-    ASTNode idx_a = create_box(tm.arena, INT_M, idx_a_label);
-    ASTNode arraccess_a_children[] = {arr_a_access, idx_a};
-    ASTNode arraccess_a = create_node(tm.arena, ARRACCESS, arraccess_a_children, 2);
-    ASTNode a_decl_children[] = {a_prim, a_id, arraccess_a};
+    ASTNode five_label = create_label(tm.arena, "5", 1);
+    ASTNode five = create_box(tm.arena, INT_M, five_label);
+    ASTNode a_decl_children[] = {a_prim_type, a_id, five};
     ASTNode a_decl = create_node(tm.arena, VARDECL, a_decl_children, 3);
 
-    // --- init int b <- result[1]; ---
-    ASTNode b_type_val = create_value_box(tm.arena, 0);
-    ASTNode b_type_children[] = {b_type_val};
-    ASTNode b_prim = create_node(tm.arena, PRIMITIVETYPE, b_type_children, 1);
-    ASTNode b_label = create_label(tm.arena, "b", 1);
-    ASTNode b_id = create_box(tm.arena, ID_M, b_label);
-    ASTNode arr_b_label = create_label(tm.arena, "result", 6);
-    ASTNode arr_b_id = create_box(tm.arena, ID_M, arr_b_label);
-    ASTNode arr_b_access_children[] = {arr_b_id};
-    ASTNode arr_b_access = create_node(tm.arena, ACCESS, arr_b_access_children, 1);
-    ASTNode idx_b_label = create_label(tm.arena, "1", 1);
-    ASTNode idx_b = create_box(tm.arena, INT_M, idx_b_label);
-    ASTNode arraccess_b_children[] = {arr_b_access, idx_b};
-    ASTNode arraccess_b = create_node(tm.arena, ARRACCESS, arraccess_b_children, 2);
-    ASTNode b_decl_children[] = {b_prim, b_id, arraccess_b};
-    ASTNode b_decl = create_node(tm.arena, VARDECL, b_decl_children, 3);
+    // print(a)
+    ASTNode print_label = create_label(tm.arena, "print", 5);
+    ASTNode print_id = create_box(tm.arena, ID_M, print_label);
+    ASTNode print_access_children[] = {print_id};
+    ASTNode print_access = create_node(tm.arena, ACCESS, print_access_children, 1);
 
-    // --- init int c <- result[2]; ---
-    ASTNode c_type_val = create_value_box(tm.arena, 0);
-    ASTNode c_type_children[] = {c_type_val};
-    ASTNode c_prim = create_node(tm.arena, PRIMITIVETYPE, c_type_children, 1);
-    ASTNode c_label = create_label(tm.arena, "c", 1);
-    ASTNode c_id = create_box(tm.arena, ID_M, c_label);
-    ASTNode arr_c_label = create_label(tm.arena, "result", 6);
-    ASTNode arr_c_id = create_box(tm.arena, ID_M, arr_c_label);
-    ASTNode arr_c_access_children[] = {arr_c_id};
-    ASTNode arr_c_access = create_node(tm.arena, ACCESS, arr_c_access_children, 1);
-    ASTNode idx_c_label = create_label(tm.arena, "2", 1);
-    ASTNode idx_c = create_box(tm.arena, INT_M, idx_c_label);
-    ASTNode arraccess_c_children[] = {arr_c_access, idx_c};
-    ASTNode arraccess_c = create_node(tm.arena, ARRACCESS, arraccess_c_children, 2);
-    ASTNode c_decl_children[] = {c_prim, c_id, arraccess_c};
-    ASTNode c_decl = create_node(tm.arena, VARDECL, c_decl_children, 3);
+    ASTNode a_ref_label = create_label(tm.arena, "a", 1);
+    ASTNode a_ref = create_box(tm.arena, ID_M, a_ref_label);
+    ASTNode a_ref_access_children[] = {a_ref};
+    ASTNode a_ref_access = create_node(tm.arena, ACCESS, a_ref_access_children, 1);
+
+    ASTNode args_children[] = {a_ref_access};
+    ASTNode arguments = create_node(tm.arena, ARGUMENTS, args_children, 1);
+
+    ASTNode funccall_children[] = {print_access, arguments};
+    ASTNode funccall = create_node(tm.arena, FUNCCALL, funccall_children, 2);
 
     // StatList
-    ASTNode stat_children[] = {funcdecl, res_decl, a_decl, b_decl, c_decl};
-    ASTNode statlist = create_node(tm.arena, STATLIST, stat_children, 5);
+    ASTNode stat_children[] = {a_decl, funccall};
+    ASTNode statlist = create_node(tm.arena, STATLIST, stat_children, 2);
     // print AST
     print_ast(statlist, "", true, NULL);
 
     // evaluate
     SymbolsManager* manager = create_symbols_manager(false);
-    Arena* eval_arena = arena_create(LOCAL_ARENA_SIZE);
 
-    EvalPass result = evaluate(manager, &statlist, eval_arena);
+    print_define(manager);
+    EvalPass result = evaluate(manager, &statlist, manager->global_arena);
     print_eval_pass(result);
 
     print_symbols_tree(manager, manager->root, "global");
 
     destroyAST(tm);
-    arena_destroy(eval_arena);
 }
 
 int main(){
