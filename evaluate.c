@@ -32,99 +32,6 @@ void print_vvalue(VValue* v) {
     }
 }
 
-void print_symbols_table(SymbolsManager* manager, SymbolsTable* table, char* st_name, int depth) {
-    if (!manager || !table || !table->hash) return;
-
-    char**   identifiers = dynadict_list_indexes(table->hash);
-    VValue** storage     = (VValue**)hash_to_list(table->hash);
-
-    if (!identifiers || !storage) return;
-
-    char indent[128] = "";
-    for (int i = 0; i < depth; i++)
-        strncat(indent, "    ", sizeof(indent) - strlen(indent) - 1);
-
-    #define MAX_LINES    256
-    #define MAX_LINE_LEN 256
-    char lines[MAX_LINES][MAX_LINE_LEN];
-    int  line_count = 0;
-    int  max_width  = 0;
-
-    snprintf(lines[line_count], MAX_LINE_LEN, " SYMBOLS TABLE: %s ", st_name);
-    max_width = strlen(lines[line_count]);
-    line_count++;
-
-    int n     = table->hash->count;
-    int nattr = manager->index_hash->count;
-
-    char** attr_keys = dynadict_list_indexes(manager->index_hash);
-
-    for (int i = 0; i < n; i++) {
-        VValue* slots = storage[i];
-
-        /* identifier header line */
-        snprintf(lines[line_count], MAX_LINE_LEN, " %s :", identifiers[i]);
-        if ((int)strlen(lines[line_count]) > max_width) max_width = strlen(lines[line_count]);
-        line_count++;
-
-        for (int a = 0; a < nattr; a++) {
-            if (slots[a].vv_tag == VV_UNDEFINED) continue;
-
-            /* reverse lookup attribute name */
-            char* attr_name = NULL;
-            for (int k = 0; k < nattr; k++) {
-                int* idx = dynadict_get(manager->index_hash, attr_keys[k]);
-                if (idx && *idx == a) { attr_name = attr_keys[k]; break; }
-            }
-
-            char val_buf[64];
-            switch (slots[a].vv_tag) {
-                case VV_INT:    snprintf(val_buf, sizeof(val_buf), "%d",      slots[a].value_int);                              break;
-                case VV_FLOAT:  snprintf(val_buf, sizeof(val_buf), "%.2f",    slots[a].value_float);                            break;
-                case VV_BOOL:   snprintf(val_buf, sizeof(val_buf), "%s",      slots[a].value_bool ? "true" : "false");          break;
-                case VV_STRING: snprintf(val_buf, sizeof(val_buf), "\"%s\"",  slots[a].value_string ? slots[a].value_string : "null"); break;
-                case VV_PTR:    snprintf(val_buf, sizeof(val_buf), "ptr(%p)", slots[a].value_ptr);                              break;
-                default:        snprintf(val_buf, sizeof(val_buf), "???");                                                       break;
-            }
-
-            if (attr_name)
-                snprintf(lines[line_count], MAX_LINE_LEN, "     %s = %s", attr_name, val_buf);
-            else
-                snprintf(lines[line_count], MAX_LINE_LEN, "     [%d] = %s", a, val_buf);
-
-            if ((int)strlen(lines[line_count]) > max_width) max_width = strlen(lines[line_count]);
-            line_count++;
-        }
-    }
-
-    /* draw box */
-    char bar[MAX_LINE_LEN];
-    memset(bar, '-', max_width + 2);
-    bar[max_width + 2] = '\0';
-
-    printf("\n");
-    printf("%s+%s+\n", indent, bar);
-    for (int i = 0; i < line_count; i++) {
-        if (i == 1) printf("%s+%s+\n", indent, bar);
-        printf("%s| %-*s |\n", indent, max_width, lines[i]);
-    }
-    printf("%s+%s+\n", indent, bar);
-    printf("\n");
-}
-
-void print_symbols_tree_recursive(SymbolsManager* manager, SymbolsTable* table, char* name, int depth) {
-    if (!manager || !table) return;
-    print_symbols_table(manager, table, name, depth);
-    if (table->child)   print_symbols_tree_recursive(manager, table->child,   "Child",   depth + 1);
-    if (table->sibling) print_symbols_tree_recursive(manager, table->sibling, "Sibling", depth);
-}
-
-void print_symbols_tree(SymbolsManager* manager, SymbolsTable* root, char* root_name) {
-    printf("═══════════════ SCOPE TREE ═══════════════\n");
-    print_symbols_tree_recursive(manager, root, root_name, 0);
-    printf("══════════════════════════════════════════\n");
-}
-
 bool type_equals(Type a, Type b) {
     if (a.kind != b.kind) return false;
 
@@ -133,10 +40,12 @@ bool type_equals(Type a, Type b) {
             return a.primitive_tag == b.primitive_tag;
 
         case KIND_ARRAY:
-            if (a.ArrType.elem_type != b.ArrType.elem_type) return false;
-            if (a.ArrType.ndims != b.ArrType.ndims) return false;
-            for (int i = 0; i < a.ArrType.ndims; i++) {
-                if (a.ArrType.sizes[i] != b.ArrType.sizes[i]) return false;
+            if (a.array.elem_type != b.array.elem_type) return false;
+            if (a.array.ndims != b.array.ndims) return false;
+            for (int i = 0; i < a.array.ndims; i++) {
+                if (a.array.sizes[i] != b.array.sizes[i]){
+                    return false;
+                }
             }
             return true;
 
@@ -146,9 +55,9 @@ bool type_equals(Type a, Type b) {
 }
 
 EvalPass eval_comparison(EvalPass left, EvalPass right, int op) {
-    assert(left.tag  == VARIABLE_TYPE);
+    assert(left.tag == VARIABLE_TYPE);
     assert(right.tag == VARIABLE_TYPE);
-    assert(left.as_variable.vtype.kind  == KIND_PRIMITIVE);
+    assert(left.as_variable.vtype.kind == KIND_PRIMITIVE);
     assert(right.as_variable.vtype.kind == KIND_PRIMITIVE);
 
     TypeTag lt = left.as_variable.vtype.primitive_tag;
@@ -205,7 +114,7 @@ EvalPass eval_comparison(EvalPass left, EvalPass right, int op) {
 }
 
 EvalPass eval_arithmetic(EvalPass left, EvalPass right, char op) {
-    assert(left.tag  == VARIABLE_TYPE);
+    assert(left.tag == VARIABLE_TYPE);
     assert(right.tag == VARIABLE_TYPE);
     assert(left.as_variable.vtype.kind  == KIND_PRIMITIVE);
     assert(right.as_variable.vtype.kind == KIND_PRIMITIVE);
@@ -252,58 +161,164 @@ EvalPass eval_arithmetic(EvalPass left, EvalPass right, char op) {
     return action;
 }
 
-EvalPass eval_deep_copy(EvalPass source, Arena* dest_arena) {
-    EvalPass copy = source;
-
-    if (copy.tag != VARIABLE_TYPE) return copy;
-
-    VValue val = copy.as_variable.storage;
-    Type type = copy.as_variable.vtype;
-
-    switch (val.vv_tag) {
-        case VV_STRING: {
-            if (val.value_string) {
-                size_t len = strlen(val.value_string) + 1;
-                char* str_copy = (char*) arena_get(dest_arena, len);
-                memcpy(str_copy, val.value_string, len);
-                val.value_string = str_copy;
-            }
-            break;
+VValue var_deep_copy(VValue val, Type type, Arena* dest_arena) {
+    VValue copy = val;
+    if(type.kind == KIND_PRIMITIVE){
+        if(type.primitive_tag == VAR_TYPE_STRING){
+            size_t len = strlen(val.value_string) + 1;
+            char* str_copy = (char*) arena_get(dest_arena, len);
+            memcpy(str_copy, val.value_string, len);
+            val.value_string = str_copy;
         }
-        case VV_PTR: {
-            if (!val.value_ptr) break;
-
-            if (type.kind == KIND_ARRAY) {
-                size_t total = 1;
-                for (int d = 0; d < type.ArrType.ndims; d++) {
-                    total *= type.ArrType.sizes[d];
-                }
-
-                VValue* old_data = (VValue*) val.value_ptr;
-                VValue* new_data = (VValue*) arena_get(dest_arena, total * sizeof(VValue));
-                memcpy(new_data, old_data, total * sizeof(VValue));
-
-                for (size_t i = 0; i < total; i++) {
-                    if (new_data[i].vv_tag == VV_STRING && new_data[i].value_string) {
-                        size_t len = strlen(new_data[i].value_string) + 1;
-                        char* s = (char*) arena_get(dest_arena, len);
-                        memcpy(s, new_data[i].value_string, len);
-                        new_data[i].value_string = s;
-                    }
-                }
-
-                val.value_ptr = new_data;
-            }
-            break;
+        else{
+            return copy;
         }
-        default:
-            break;
+    }
+    else if(type.kind == KIND_ARRAY){
+        size_t total = 1;
+        for (int d = 0; d < type.array.ndims; d++) {
+            total *= type.array.sizes[d];
+        }
+
+        VValue* old_data = (VValue*) val.value_ptr;
+        VValue* new_data = (VValue*) arena_get(dest_arena, total * sizeof(VValue));
+        memcpy(new_data, old_data, total * sizeof(VValue));
+        
+        for (size_t i = 0; i < total; i++) {
+            if (new_data[i].vv_tag == VV_STRING && new_data[i].value_string){
+                new_data[i] = var_deep_copy(new_data[i], type, dest_arena);
+            }
+        }
+
+        val.value_ptr = new_data;
     }
 
-    copy.as_variable.storage = val;
-    return copy;
+    return val;
 }
 
+Variable unpack_pointer(Variable variable){
+    assert(variable.vtype.kind == KIND_POINTER);
+    assert(variable.vtype.pointer.pointee_type);
+    assert(variable.vtype.pointer.unpack);
+    assert(variable.storage.vv_tag == VV_PTR);
+    assert(variable.storage.value_ptr);
+
+    VValue val;
+    Type ptr_type = *variable.vtype.pointer.pointee_type;
+    
+    VValue* ptr_storage = (VValue*) variable.storage.value_ptr;
+    switch (ptr_type.primitive_tag) {
+        case VAR_TYPE_INT:    val = (VValue){ .vv_tag = VV_INT,    .value_int    = ptr_storage->value_int}; break;
+        case VAR_TYPE_FLOAT:  val = (VValue){ .vv_tag = VV_FLOAT,  .value_float  = ptr_storage->value_float  }; break;
+        case VAR_TYPE_BOOL:   val = (VValue){ .vv_tag = VV_BOOL,   .value_bool   = ptr_storage->value_bool   }; break;
+        case VAR_TYPE_STRING: val = (VValue){ .vv_tag = VV_STRING, .value_string = ptr_storage->value_string }; break;
+        default: assert(false);
+    }
+
+    return (Variable) {.vtype = ptr_type, .storage = val};
+}
+
+EvalPass unpack_access_to_var(SymbolsManager* manager, EvalPass packed_expr){
+    if(packed_expr.tag == VARIABLE_TYPE){
+        return packed_expr;
+    }
+    else if(packed_expr.tag == ACCESS_TYPE){
+        VValue* storage_ptr = packed_expr.as_access.link;
+
+        VValue type_slot = getAttributeStorage(manager, storage_ptr, "type");
+        assert(type_slot.vv_tag == VV_PTR);
+        Type access_type = *((Type*) type_slot.value_ptr);
+
+        VValue value_slot = getAttributeStorage(manager, storage_ptr, "value");
+
+        Variable new_var = (Variable) {.vtype = access_type, .storage = value_slot};
+
+        if(new_var.vtype.kind == KIND_POINTER && new_var.vtype.pointer.unpack == true){
+            new_var = unpack_pointer(new_var);
+        }
+
+        EvalPass expr_unpacked;
+        expr_unpacked.tag = VARIABLE_TYPE;
+        expr_unpacked.as_variable = new_var;
+
+        return expr_unpacked;
+    }
+    else{
+        assert(false);
+    }
+}
+
+EvalPass pack_var_to_access(SymbolsManager* manager, Arena* current_arena, EvalPass unpacked_expr){
+    if(unpacked_expr.tag == VARIABLE_TYPE){
+        VValue* soft_storage = getSoftStorage(manager, current_arena);
+
+        Type* type_storage = (Type*) arena_get(current_arena, sizeof(Type));
+        *type_storage = unpacked_expr.as_variable.vtype;
+
+        setAttributeStorage(manager, soft_storage, "type", (VValue){.vv_tag=VV_PTR, .value_ptr=type_storage});
+        setAttributeStorage(manager, soft_storage, "value", unpacked_expr.as_variable.storage);
+
+        CentralAccess packed_access = {.link=soft_storage, .view=true};
+        return (EvalPass) {.tag=ACCESS_TYPE, .as_access=packed_access};
+    }
+    else if(unpacked_expr.tag == ACCESS_TYPE){
+        return unpacked_expr;
+    }
+    else{
+        assert(false);
+    }
+}
+
+void type_modify(Type* type_ptr, Type type_from){
+    if(type_ptr->kind != type_from.kind) return;
+    if(type_ptr->kind == KIND_PRIMITIVE) return;
+
+    if(type_ptr->kind == KIND_ARRAY){
+        if(type_ptr->array.ndims != type_from.array.ndims) return;
+        if(type_ptr->array.elem_type != type_from.array.elem_type) return;
+
+        for(int i = 0; i < type_ptr->array.ndims; i++){
+            if(type_ptr->array.sizes[i] != 0) return;
+        }
+
+        for(int i = 0; i < type_ptr->array.ndims; i++){
+            type_ptr->array.sizes[i] = type_from.array.sizes[i];
+        }
+    }
+}
+
+size_t iterations_per_type(Type* type) {
+    switch (type->kind) {
+        case KIND_PRIMITIVE:
+            return 1;
+        case KIND_ARRAY: {
+            size_t total = 1;
+            for (int d = 0; d < type->array.ndims; d++) {
+                total *= type->array.sizes[d];
+            }
+            return total;
+        }
+        case KIND_POINTER:
+            return 1;
+        default:
+            assert(false);
+            return 0;
+    }
+}
+
+void print_type(Type tp){
+    printf("TYPE: kind=%d", tp.kind);
+    if (tp.kind == KIND_PRIMITIVE) {
+        printf(" primitive=%d", tp.primitive_tag);
+    } else if (tp.kind == KIND_ARRAY) {
+        printf(" elem=%d ndims=%d sizes=[", tp.array.elem_type, tp.array.ndims);
+        for (int i = 0; i < tp.array.ndims; i++) {
+            printf("%d%s", tp.array.sizes[i], i < tp.array.ndims - 1 ? "," : "");
+        }
+        printf("]");
+    }
+    printf("\n");
+}
 void print_eval_pass(EvalPass ep) {
     switch (ep.tag) {
         case UNDEFINED_TYPE:
@@ -315,24 +330,14 @@ void print_eval_pass(EvalPass ep) {
             printf("\n");
             break;
         case VART_TYPE:
-            printf("TYPE: kind=%d", ep.as_vart.kind);
-            if (ep.as_vart.kind == KIND_PRIMITIVE) {
-                printf(" primitive=%d", ep.as_vart.primitive_tag);
-            } else if (ep.as_vart.kind == KIND_ARRAY) {
-                printf(" elem=%d ndims=%d sizes=[", ep.as_vart.ArrType.elem_type, ep.as_vart.ArrType.ndims);
-                for (int i = 0; i < ep.as_vart.ArrType.ndims; i++) {
-                    printf("%d%s", ep.as_vart.ArrType.sizes[i], i < ep.as_vart.ArrType.ndims - 1 ? "," : "");
-                }
-                printf("]");
-            }
-            printf("\n");
+            print_type(ep.as_vart);
             break;
         case VARIABLE_TYPE:
             printf("VARIABLE: type=");
             if (ep.as_variable.vtype.kind == KIND_PRIMITIVE) {
                 printf("prim(%d)", ep.as_variable.vtype.primitive_tag);
             } else {
-                printf("arr(elem=%d,ndims=%d)", ep.as_variable.vtype.ArrType.elem_type, ep.as_variable.vtype.ArrType.ndims);
+                printf("arr(elem=%d,ndims=%d)", ep.as_variable.vtype.array.elem_type, ep.as_variable.vtype.array.ndims);
             }
             printf(" value=");
             print_vvalue(&ep.as_variable.storage);
@@ -351,6 +356,9 @@ void print_eval_pass(EvalPass ep) {
                 print_vvalue(&ep.as_signal.variable.storage);
             }
             printf("\n");
+            break;
+        case ACCESS_TYPE:
+            printf("ACCESS: %p\n", ep.as_access.link);
             break;
         default:
             printf("UNKNOWN TAG %d\n", ep.tag);
@@ -400,7 +408,7 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     // OUTPUT should only be a pointer to variable type
                     EvalPass identifier = evaluate(manager, identifier_node, current_arena);
                     // OUTPUT should only be a string type
-
+                    //printf("Tag -> %d\n", identifier.tag);
                     assert(identifier.tag == VALUE_TYPE);
                     assert(identifier.as_value.vv_tag == VV_STRING);
                     assert(var_type.tag == VART_TYPE);
@@ -417,12 +425,16 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     setAttributeIdentifier(manager, id_char, "type", (VValue){ .vv_tag = VV_PTR, .value_ptr = type_storage});
                     if(get_children_count(*node) == 3){
                         ASTNode* expr_node = identifier_node->sibling;
-                        EvalPass expr = evaluate(manager, expr_node, current_arena);
-                        assert(expr.tag == VARIABLE_TYPE);
-                        assert(type_equals(var_type.as_vart, expr.as_variable.vtype));
-                        // OUTPUT should be a variable with type
+                        EvalPass expr_p = evaluate(manager, expr_node, current_arena);
+
+                        EvalPass expr_original = unpack_access_to_var(manager, expr_p);
+
+                        type_modify(type_storage, expr_original.as_variable.vtype);
+                        assert(type_equals(*type_storage, expr_original.as_variable.vtype));
+
+                        VValue value_deep_copy = var_deep_copy(expr_original.as_variable.storage, expr_original.as_variable.vtype, current_arena);
                         
-                        setAttributeIdentifier(manager, id_char, "value", expr.as_variable.storage);
+                        setAttributeIdentifier(manager, id_char, "value", value_deep_copy);
                     }
                     break;
                 }
@@ -434,20 +446,67 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* expr_node = access_node->sibling;
 
                     EvalPass access = evaluate(manager, access_node, current_arena);
-                    // OUTPUT should be a VValue pointer towards a *VValue
-                    assert(access.tag == VALUE_TYPE);
-                    assert(access.as_value.vv_tag == VV_PTR);
+                    EvalPass expr_p = evaluate(manager, expr_node, current_arena);
+                    EvalPass expr_original = unpack_access_to_var(manager, expr_p);
+
+                    assert(access.tag == ACCESS_TYPE);
                     
-                    VValue access_type_raw = getAttributeStorage(manager, access.as_value.value_ptr, "type");
+                    VValue access_type_raw = getAttributeStorage(manager, access.as_access.link, "type");
                     assert(access_type_raw.vv_tag == VV_PTR);
-                    Type access_type = *((Type*) access_type_raw.value_ptr);
+                    assert(access_type_raw.value_ptr);
 
-                    EvalPass expr = evaluate(manager, expr_node, current_arena);
-                    // OUTPUT should be a variable
-                    assert(expr.tag == VARIABLE_TYPE);
-                    assert(type_equals(access_type, expr.as_variable.vtype));
+                    Type* access_type = (Type*) access_type_raw.value_ptr;
 
-                    setAttributeStorage(manager, access.as_value.value_ptr, "value", expr.as_variable.storage);
+                    if(!access.as_access.view){
+                        type_modify(access_type, expr_original.as_variable.vtype);
+                    }
+                    //print_type(*access_type);
+                    //print_type(expr_original.as_variable.vtype);
+                    
+                    int case_transfer = -1;
+                    if(access_type->kind == KIND_PRIMITIVE){
+                        case_transfer = 0;
+                    }
+                    else if(access_type->kind == KIND_POINTER){
+                        if(access_type->pointer.unpack){
+                            case_transfer = 1;
+                        }
+                        else{
+                            case_transfer = 0;
+                        }
+                    }
+                    else if(access_type->kind == KIND_ARRAY){
+                        case_transfer = 2;
+                    }
+
+                    switch (case_transfer)
+                    {
+                        case 0: {
+                            assert(type_equals(*access_type, expr_original.as_variable.vtype));
+                            VValue value_deep_copy = var_deep_copy(expr_original.as_variable.storage, expr_original.as_variable.vtype, current_arena);
+                            setAttributeStorage(manager, access.as_access.link, "value", value_deep_copy);
+                            break;
+                        }
+                        case 1: {
+                            assert(type_equals(*(access_type->pointer.pointee_type), expr_original.as_variable.vtype));
+                            VValue value_deep_copy = var_deep_copy(expr_original.as_variable.storage, expr_original.as_variable.vtype, current_arena);
+                            VValue val_slot = getAttributeStorage(manager, access.as_access.link, "value");
+                            VValue* target = (VValue*) val_slot.value_ptr;
+                            *target = value_deep_copy;
+                            break;
+                        }
+                        case 2: {
+                            VValue val_slot = getAttributeStorage(manager, access.as_access.link, "value");
+                            VValue* dest = (VValue*) val_slot.value_ptr;
+                            VValue* src = (VValue*) expr_original.as_variable.storage.value_ptr;
+                            size_t total = iterations_per_type(access_type);
+                            memcpy(dest, src, total * sizeof(VValue));
+                            break;
+                        }
+                        default:
+                            assert(false);
+                            break;
+                    }
 
                     break;
                 }
@@ -464,8 +523,8 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     
                     if(type_spec.kind == KIND_ARRAY){
                         size_t store_size = 1;
-                        for (int d = 0; d < type_spec.ArrType.ndims; d++){
-                            store_size *= type_spec.ArrType.sizes[d];
+                        for (int d = 0; d < type_spec.array.ndims; d++){
+                            store_size *= type_spec.array.sizes[d];
                         }
 
                         VValue* storage = (VValue*) arena_get(current_arena, store_size*sizeof(VValue));
@@ -496,23 +555,23 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     if (instantiation.nclass == ARRINST) {
                         // chained — extend existing array type
                         assert(instantiation.tag == VART_TYPE);
-                        arr_type.ArrType.elem_type = instantiation.as_vart.ArrType.elem_type;
-                        arr_type.ArrType.ndims     = instantiation.as_vart.ArrType.ndims + 1;
-                        arr_type.ArrType.sizes[0]  = dim_size;
-                        for (int d = 0; d < instantiation.as_vart.ArrType.ndims; d++)
-                            arr_type.ArrType.sizes[d + 1] = instantiation.as_vart.ArrType.sizes[d];
+                        arr_type.array.elem_type = instantiation.as_vart.array.elem_type;
+                        arr_type.array.ndims     = instantiation.as_vart.array.ndims + 1;
+                        arr_type.array.sizes[0]  = dim_size;
+                        for (int d = 0; d < instantiation.as_vart.array.ndims; d++)
+                            arr_type.array.sizes[d + 1] = instantiation.as_vart.array.sizes[d];
                     } else if (instantiation.tag == VALUE_TYPE) {
                         // innermost — primitive type from @vl
                         assert(instantiation.as_value.vv_tag == VV_INT);
                         switch (instantiation.as_value.value_int) {
-                            case 0: arr_type.ArrType.elem_type = VAR_TYPE_INT;    break;
-                            case 1: arr_type.ArrType.elem_type = VAR_TYPE_BOOL;   break;
-                            case 2: arr_type.ArrType.elem_type = VAR_TYPE_FLOAT;  break;
-                            case 3: arr_type.ArrType.elem_type = VAR_TYPE_STRING; break;
+                            case 0: arr_type.array.elem_type = VAR_TYPE_INT;    break;
+                            case 1: arr_type.array.elem_type = VAR_TYPE_BOOL;   break;
+                            case 2: arr_type.array.elem_type = VAR_TYPE_FLOAT;  break;
+                            case 3: arr_type.array.elem_type = VAR_TYPE_STRING; break;
                             default: assert(false);
                         }
-                        arr_type.ArrType.ndims    = 1;
-                        arr_type.ArrType.sizes[0] = dim_size;
+                        arr_type.array.ndims    = 1;
+                        arr_type.array.sizes[0] = dim_size;
                     } else {
                         assert(false);
                     }
@@ -565,8 +624,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* cond_node = node->storage.node->left_child;
                     ASTNode* body_node = cond_node->sibling;
 
-                    EvalPass cond = evaluate(manager, cond_node, current_arena);
-                    assert(cond.tag == VARIABLE_TYPE);
+                    EvalPass cond_p = evaluate(manager, cond_node, current_arena);
+                    EvalPass cond = unpack_access_to_var(manager, cond_p);
+                    //assert(cond.tag == VARIABLE_TYPE);
                     assert(cond.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
 
                     if (cond.as_variable.storage.value_bool) {
@@ -594,8 +654,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
 
                     initializeScope(manager, DYNADICT_DEFAULT_CAPACITY);
                     while (true) {
-                        EvalPass cond = evaluate(manager, cond_node, current_arena);
-                        assert(cond.tag == VARIABLE_TYPE);
+                        EvalPass cond_p = evaluate(manager, cond_node, current_arena);
+                        EvalPass cond = unpack_access_to_var(manager, cond_p);
+                        //assert(cond.tag == VARIABLE_TYPE);
                         assert(cond.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
 
                         if (!cond.as_variable.storage.value_bool) break;
@@ -623,8 +684,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     evaluate(manager, init_node, current_arena);
                     initializeScope(manager, DYNADICT_DEFAULT_CAPACITY);
                     while (true) {
-                        EvalPass cond = evaluate(manager, cond_node, current_arena);
-                        assert(cond.tag == VARIABLE_TYPE);
+                        EvalPass cond_p = evaluate(manager, cond_node, current_arena);
+                        EvalPass cond = unpack_access_to_var(manager, cond_p);
+                        //assert(cond.tag == VARIABLE_TYPE);
                         assert(cond.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
 
                         if (!cond.as_variable.storage.value_bool) break;
@@ -653,8 +715,14 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
 
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
+
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
+
+                    printf("SUM:\n");
+                    print_eval_pass(left_expr);
 
                     action = eval_arithmetic(left_expr, right_expr, '+');
                     
@@ -665,8 +733,11 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
 
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
+
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
 
                     action = eval_arithmetic(left_expr, right_expr, '-');
                     break;
@@ -676,8 +747,11 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
 
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
+
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
 
                     action = eval_arithmetic(left_expr, right_expr, '*');
                     break;
@@ -688,8 +762,11 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
 
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
+
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
 
                     action = eval_arithmetic(left_expr, right_expr, '/');
                     break;
@@ -698,11 +775,13 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
                     
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
 
-                    assert(left_expr.tag == VARIABLE_TYPE);
-                    assert(right_expr.tag == VARIABLE_TYPE);
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
+
+                    //assert(right_expr.tag == VARIABLE_TYPE);
                     assert(left_expr.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
                     assert(right_expr.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
 
@@ -717,11 +796,14 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* left_expr_node = node->storage.node->left_child;
                     ASTNode* right_expr_node = left_expr_node->sibling;
                     
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
 
-                    assert(left_expr.tag == VARIABLE_TYPE);
-                    assert(right_expr.tag == VARIABLE_TYPE);
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
+
+                    //assert(left_expr.tag == VARIABLE_TYPE);
+                    //assert(right_expr.tag == VARIABLE_TYPE);
                     assert(left_expr.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
                     assert(right_expr.as_variable.vtype.primitive_tag == VAR_TYPE_BOOL);
 
@@ -739,9 +821,12 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* logical_operator_node = left_expr_node->sibling;
                     ASTNode* right_expr_node = logical_operator_node->sibling;
 
-                    EvalPass left_expr = evaluate(manager, left_expr_node, current_arena);
+                    EvalPass left_expr_p = evaluate(manager, left_expr_node, current_arena);
                     EvalPass logical_operator = evaluate(manager, logical_operator_node, current_arena);
-                    EvalPass right_expr = evaluate(manager, right_expr_node, current_arena);
+                    EvalPass right_expr_p = evaluate(manager, right_expr_node, current_arena);
+
+                    EvalPass left_expr = unpack_access_to_var(manager, left_expr_p);
+                    EvalPass right_expr = unpack_access_to_var(manager, right_expr_p);
 
                     assert(logical_operator.as_value.vv_tag == VV_INT);
                     action = eval_comparison(left_expr, right_expr, logical_operator.as_value.value_int);
@@ -762,13 +847,12 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     EvalPass args = evaluate(manager, args_node, current_arena);
 
                     // access gives us a VV_PTR to the symbol storage
-                    assert(access.tag == VALUE_TYPE);
-                    assert(access.as_value.vv_tag == VV_PTR);
+                    assert(access.tag == ACCESS_TYPE);
                     assert(args.tag == ARGS_TYPE);
                     assert(args.as_args.mode == ARGUMENT_MODE);
 
                     // retrieve function info from symbol table
-                    VValue* func_storage = (VValue*) access.as_value.value_ptr;
+                    VValue* func_storage = access.as_access.link;
 
                     VValue params_raw = getAttributeStorage(manager, func_storage, "params");
                     assert(params_raw.vv_tag == VV_PTR);
@@ -815,14 +899,23 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                         assert(result.as_signal.signal == SIGNAL_RETURN);
                         assert(result.as_signal.variable.storage.vv_tag != VV_UNDEFINED);
 
-                        action.tag = VARIABLE_TYPE;
-                        action.as_variable = result.as_signal.variable;
-                        action = eval_deep_copy(action, current_arena);
+                        Type body_ret_type = result.as_signal.variable.vtype;
 
-                        assert(type_equals(action.as_variable.vtype, return_type));
+                        type_modify(&return_type, body_ret_type);
+
+                        print_type(body_ret_type);
+                        print_type(return_type);
+
+                        assert(type_equals(body_ret_type, return_type));
+
+                        action.tag = VARIABLE_TYPE;
+                        action.as_variable.vtype = body_ret_type;
+                        action.as_variable.storage = var_deep_copy(result.as_signal.variable.storage, result.as_signal.variable.vtype, current_arena);
                     }
 
-                    arena_destroy(local_inner_arena);
+                    if(manager->production){
+                        arena_destroy(local_inner_arena);
+                    }
 
                     finalizeScope(manager);
                     
@@ -833,9 +926,10 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* expr_node = access_node->sibling;
 
                     EvalPass access = evaluate(manager, access_node, current_arena);
-                    EvalPass expr = evaluate(manager, expr_node, current_arena);
+                    EvalPass expr_p = evaluate(manager, expr_node, current_arena);
+                    EvalPass expr = unpack_access_to_var(manager, expr_p);
 
-                    assert(expr.tag == VARIABLE_TYPE);
+                    //assert(expr.tag == VARIABLE_TYPE);
                     assert(expr.as_variable.vtype.primitive_tag == VAR_TYPE_INT);
 
                     int idx = expr.as_variable.storage.value_int;
@@ -848,8 +942,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                         assert(access.as_variable.vtype.kind == KIND_ARRAY);
                         curr_type = access.as_variable.vtype;
                         base_ptr = (VValue*) access.as_variable.storage.value_ptr;
-                    } else if (access.tag == VALUE_TYPE && access.as_value.vv_tag == VV_PTR) {
-                        VValue* storage_ptr = (VValue*) access.as_value.value_ptr;
+                    } else if (access.tag == ACCESS_TYPE) {
+                        // this can be replaced by access to var
+                        VValue* storage_ptr = access.as_access.link;
 
                         VValue type_slot = getAttributeStorage(manager, storage_ptr, "type");
                         assert(type_slot.vv_tag == VV_PTR);
@@ -864,46 +959,69 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     }
 
                     // bounds check
-                    assert(idx >= 0 && idx < curr_type.ArrType.sizes[0]);
+                    assert(idx >= 0 && idx < curr_type.array.sizes[0]);
 
                     // compute stride
                     int stride = 1;
-                    for (int d = 1; d < curr_type.ArrType.ndims; d++)
-                        stride *= curr_type.ArrType.sizes[d];
+                    for (int d = 1; d < curr_type.array.ndims; d++)
+                        stride *= curr_type.array.sizes[d];
 
                     VValue* elem_ptr = &base_ptr[idx * stride];
 
-                    if (curr_type.ArrType.ndims == 1) {
-                        // last dimension → unpack actual value into variable
-                        Type prim_type = (Type){ .kind = KIND_PRIMITIVE, .primitive_tag = curr_type.ArrType.elem_type };
+                    if (curr_type.array.ndims == 1) {
+                        // last dimension → unpack actual value into pointer
+                        Type* ptr_pointee_storage = (Type*) arena_get(current_arena, sizeof(Type));
+                        ptr_pointee_storage->kind = KIND_PRIMITIVE;
+                        ptr_pointee_storage->primitive_tag = curr_type.array.elem_type;
 
-                        VValue val;
-                        switch (curr_type.ArrType.elem_type) {
-                            case VAR_TYPE_INT:    val = (VValue){ .vv_tag = VV_INT,    .value_int    = elem_ptr->value_int    }; break;
-                            case VAR_TYPE_FLOAT:  val = (VValue){ .vv_tag = VV_FLOAT,  .value_float  = elem_ptr->value_float  }; break;
-                            case VAR_TYPE_BOOL:   val = (VValue){ .vv_tag = VV_BOOL,   .value_bool   = elem_ptr->value_bool   }; break;
-                            case VAR_TYPE_STRING: val = (VValue){ .vv_tag = VV_STRING, .value_string = elem_ptr->value_string }; break;
-                            default: assert(false);
-                        }
+                        Type pointer_type;
+                        pointer_type.kind = KIND_POINTER;
+                        pointer_type.pointer.pointee_type = ptr_pointee_storage;
+                        pointer_type.pointer.unpack = true;
 
-                        action.tag = VARIABLE_TYPE;
-                        action.as_variable.vtype = prim_type;
-                        action.as_variable.storage = val;
-                    } else if (curr_type.ArrType.ndims > 1) {
+                        EvalPass arr_access;
+                        arr_access.tag = VARIABLE_TYPE;
+                        arr_access.as_variable.vtype = pointer_type;
+                        arr_access.as_variable.storage = (VValue){ .vv_tag = VV_PTR, .value_ptr = elem_ptr };
+
+                        action = pack_var_to_access(manager, current_arena, arr_access);
+                    } else if (curr_type.array.ndims > 1) {
                         Type reduced;
-                        reduced.kind              = KIND_ARRAY;
-                        reduced.ArrType.elem_type = curr_type.ArrType.elem_type;
-                        reduced.ArrType.ndims     = curr_type.ArrType.ndims - 1;
-                        for (int d = 0; d < reduced.ArrType.ndims; d++)
-                            reduced.ArrType.sizes[d] = curr_type.ArrType.sizes[d + 1];
+                        reduced.kind = KIND_ARRAY;
+                        reduced.array.elem_type = curr_type.array.elem_type;
+                        reduced.array.ndims = curr_type.array.ndims - 1;
+                        for (int d = 0; d < reduced.array.ndims; d++)
+                            reduced.array.sizes[d] = curr_type.array.sizes[d + 1];
 
-                        action.tag               = VARIABLE_TYPE;
-                        action.as_variable.vtype   = reduced;
-                        action.as_variable.storage = (VValue){ .vv_tag = VV_PTR, .value_ptr = elem_ptr };
+                        EvalPass arr_access;
+                        arr_access.tag = VARIABLE_TYPE;
+                        arr_access.as_variable.vtype = reduced;
+                        arr_access.as_variable.storage = (VValue){ .vv_tag = VV_PTR, .value_ptr = elem_ptr };
+
+                        action = pack_var_to_access(manager, current_arena, arr_access);
                     } else {
                         assert(false);
                     }
 
+                    break;
+                }
+                case ACCESS: {
+                    ASTNode* identifier_node = node->storage.node->left_child;
+
+                    EvalPass identifier = evaluate(manager, identifier_node, current_arena);
+
+                    assert(identifier.tag == VALUE_TYPE);
+                    assert(identifier.as_value.vv_tag == VV_STRING);
+
+                    char* id_char = identifier.as_value.value_string;
+
+                    VValue* found = getIdentifierStorage(manager, id_char);
+
+                    assert(found);
+
+                    action.tag = ACCESS_TYPE;
+                    action.as_access.link = found;
+                    action.as_access.view = false;
                     break;
                 }
                 case PRIMITIVETYPE: {
@@ -941,14 +1059,14 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     if(inner.as_vart.kind == KIND_PRIMITIVE){
                         assert(inner.as_vart.primitive_tag != VAR_TYPE_VOID);
 
-                        arr_type.ArrType.elem_type = inner.as_vart.primitive_tag;
-                        arr_type.ArrType.ndims = 1;
-                        arr_type.ArrType.sizes[0] = 0;
+                        arr_type.array.elem_type = inner.as_vart.primitive_tag;
+                        arr_type.array.ndims = 1;
+                        arr_type.array.sizes[0] = 0;
                     }
                     else if(inner.as_vart.kind == KIND_ARRAY){
-                        arr_type.ArrType.elem_type = inner.as_vart.ArrType.elem_type;
-                        arr_type.ArrType.ndims = inner.as_vart.ArrType.ndims + 1;
-                        arr_type.ArrType.sizes[arr_type.ArrType.ndims] = 0;
+                        arr_type.array.elem_type = inner.as_vart.array.elem_type;
+                        arr_type.array.ndims = inner.as_vart.array.ndims + 1;
+                        arr_type.array.sizes[arr_type.array.ndims] = 0;
                     }
                     else {
                         assert(false);
@@ -963,10 +1081,14 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     break;
 
                 case ARGUMENTS: {
+                    // Here there is problem
                     ASTNode* curr_expr = node->storage.node->left_child;
                     Arena* g_arena = manager->global_arena;
 
-                    int children_count = get_children_count(*curr_expr);
+                    int children_count = 0;
+                    if(curr_expr){
+                        children_count = get_children_count(*node);
+                    }
 
                     Args fargs;
                     fargs.mode = ARGUMENT_MODE;
@@ -974,8 +1096,9 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     fargs.list = arena_get(g_arena, children_count*sizeof(Argument));
 
                     for(int i = 0;i<children_count;i++){
-                        EvalPass expr = evaluate(manager, curr_expr, current_arena);
-                        assert(expr.tag == VARIABLE_TYPE);
+                        EvalPass expr_p = evaluate(manager, curr_expr, current_arena);
+                        EvalPass expr = unpack_access_to_var(manager, expr_p);
+                        //assert(expr.tag == VARIABLE_TYPE);
 
                         Argument sarg;
                         sarg.mode = ARGUMENT_MODE;
@@ -994,9 +1117,12 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     ASTNode* param = node->storage.node->left_child;
                     Arena* g_arena = manager->global_arena;
 
-                    Args fpars;
-                    int children_count = get_children_count(*param);
+                    int children_count = 0;
+                    if(param){
+                        children_count = get_children_count(*param);
+                    }
 
+                    Args fpars;
                     fpars.amount = children_count;
                     fpars.list = arena_get(g_arena, children_count*sizeof(Argument));
                     fpars.mode = PARAMETER_MODE;
@@ -1022,13 +1148,14 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     EvalPass identifier = evaluate(manager, identifier_node, current_arena);
                     EvalPass param = evaluate(manager, param_type_node, current_arena);
 
-                    assert(identifier.tag == IDENTIFIER_TYPE);
+                    assert(identifier.tag == VALUE_TYPE);
+                    assert(identifier.as_value.vv_tag == VV_STRING);
                     assert(param.tag == VART_TYPE);
 
                     Argument new_argument;
 
                     new_argument.mode = PARAMETER_MODE;
-                    new_argument.name = identifier.as_identifier.name;
+                    new_argument.name = identifier.as_value.value_string;
                     new_argument.argtype = param.as_vart;
 
                     action.tag = SPAR_TYPE;
@@ -1051,8 +1178,10 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
 
                     if (get_children_count(*node) > 0) {
                         ASTNode* expr_node = node->storage.node->left_child;
-                        EvalPass expr = evaluate(manager, expr_node, current_arena);
-                        assert(expr.tag == VARIABLE_TYPE);
+                        EvalPass expr_p = evaluate(manager, expr_node, current_arena);
+                        EvalPass expr = unpack_access_to_var(manager, expr_p);
+
+                        //assert(expr.tag == VARIABLE_TYPE);
                         action.as_signal.variable = expr.as_variable;
                     } else {
                         action.as_signal.variable.vtype = (Type){ .kind = KIND_PRIMITIVE, .primitive_tag = VAR_TYPE_VOID };
@@ -1107,19 +1236,8 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
                     memcpy(id_copy, id_char, len);
                     id_copy[len] = '\0';
 
-                    VValue* found = findIdentifierStorage(manager, id_copy);
-
-                    Identifier id;
-                    id.name = id_copy;
-
-                    if (found != NULL) {
-                        id.storage = (VValue){ .vv_tag = VV_PTR, .value_ptr = found };
-                    } else {
-                        id.storage = (VValue){ .vv_tag = VV_UNDEFINED};
-                    }
-
                     action.tag = VALUE_TYPE;
-                    action.as_value = (VValue){ .vv_tag = VV_PTR, .value_ptr = getIdentifierStorage(manager, id_copy)};
+                    action.as_value = (VValue){ .vv_tag = VV_STRING, .value_string = id_copy };
                     break;
                 }
                 case TYPE_WRAPPER: {
@@ -1157,8 +1275,8 @@ EvalPass evaluate(SymbolsManager* manager, ASTNode* node, Arena* current_arena){
     return action;
 }
 
-SymbolsManager* create_symbols_manager(){
-    SymbolsManager* manager = initializeSymbols(3);
+SymbolsManager* create_symbols_manager(bool production){
+    SymbolsManager* manager = initializeSymbols(3, production);
     createAttribute(manager, "type",    0);
     createAttribute(manager, "value",   1);
     createAttribute(manager, "params",  2); 
@@ -1166,8 +1284,8 @@ SymbolsManager* create_symbols_manager(){
     return manager;
 }
 
-void calculate_tree(TreeManager tree_manager){
-    SymbolsManager* symbols_manager = create_symbols_manager();
+void calculate_tree(TreeManager tree_manager, bool production){
+    SymbolsManager* symbols_manager = create_symbols_manager(production);
 
     Arena* global_arena = arena_create(GLOBAL_ARENA_SIZE);
     evaluate(symbols_manager, &tree_manager.root, global_arena);
@@ -1175,7 +1293,7 @@ void calculate_tree(TreeManager tree_manager){
 
 void test_symbols_table_tree(void) {
     /* 2 attributes: "value" at index 0, "extra" at index 1 */
-    SymbolsManager* manager = initializeSymbols(2);
+    SymbolsManager* manager = initializeSymbols(2, false);
     createAttribute(manager, "value", 0);
     createAttribute(manager, "extra", 1);
 
@@ -1214,28 +1332,175 @@ void test_symbols_table_tree(void) {
 void test_evaluator(void) {
     TreeManager tm = initializeAST();
 
-    // init int x <- 5;
-    ASTNode type_val = create_value_box(tm.arena, 0);
-    ASTNode type_children[] = {type_val};
-    ASTNode prim_type = create_node(tm.arena, PRIMITIVETYPE, type_children, 1);
+    // proc makeArr() -> int[] { ... }
+    ASTNode makeArr_label = create_label(tm.arena, "makeArr", 7);
+    ASTNode makeArr_id = create_box(tm.arena, ID_M, makeArr_label);
 
-    ASTNode x_label = create_label(tm.arena, "x", 1);
-    ASTNode x_id = create_box(tm.arena, ID_M, x_label);
+    // empty parameters
+    ASTNode parameters = create_node(tm.arena, PARAMETERS, NULL, 0);
 
-    ASTNode five_label = create_label(tm.arena, "5", 1);
-    ASTNode five = create_box(tm.arena, INT_M, five_label);
+    // return type: int[]
+    ASTNode ret_type_val = create_value_box(tm.arena, 0);
+    ASTNode ret_type_children[] = {ret_type_val};
+    ASTNode ret_prim = create_node(tm.arena, PRIMITIVETYPE, ret_type_children, 1);
+    ASTNode ret_arrtype_children[] = {ret_prim};
+    ASTNode ret_arrtype = create_node(tm.arena, ARRTYPE, ret_arrtype_children, 1);
 
-    ASTNode decl_children[] = {prim_type, x_id, five};
-    ASTNode vardecl = create_node(tm.arena, VARDECL, decl_children, 3);
+    // --- function body ---
 
-    ASTNode stat_children[] = {vardecl};
-    ASTNode statlist = create_node(tm.arena, STATLIST, stat_children, 1);
+    // init int[] arr <- assign int[3];
+    ASTNode arr_type_val = create_value_box(tm.arena, 0);
+    ASTNode arr_type_children[] = {arr_type_val};
+    ASTNode arr_prim = create_node(tm.arena, PRIMITIVETYPE, arr_type_children, 1);
+    ASTNode arrtype_children[] = {arr_prim};
+    ASTNode arrtype = create_node(tm.arena, ARRTYPE, arrtype_children, 1);
+    ASTNode arr_label = create_label(tm.arena, "arr", 3);
+    ASTNode arr_id = create_box(tm.arena, ID_M, arr_label);
+    ASTNode inst_type = create_value_box(tm.arena, 0);
+    ASTNode three_label = create_label(tm.arena, "3", 1);
+    ASTNode three = create_box(tm.arena, INT_M, three_label);
+    ASTNode arrinst_children[] = {inst_type, three};
+    ASTNode arrinst = create_node(tm.arena, ARRINST, arrinst_children, 2);
+    ASTNode assignstorage_children[] = {arrinst};
+    ASTNode assignstorage = create_node(tm.arena, ASSIGNSTORAGE, assignstorage_children, 1);
+    ASTNode arr_decl_children[] = {arrtype, arr_id, assignstorage};
+    ASTNode arr_decl = create_node(tm.arena, VARDECL, arr_decl_children, 3);
 
+    // arr[0] = 10;
+    ASTNode arr0_label = create_label(tm.arena, "arr", 3);
+    ASTNode arr0_id = create_box(tm.arena, ID_M, arr0_label);
+    ASTNode arr0_access_children[] = {arr0_id};
+    ASTNode arr0_access = create_node(tm.arena, ACCESS, arr0_access_children, 1);
+    ASTNode idx0_label = create_label(tm.arena, "0", 1);
+    ASTNode idx0 = create_box(tm.arena, INT_M, idx0_label);
+    ASTNode arraccess0_children[] = {arr0_access, idx0};
+    ASTNode arraccess0 = create_node(tm.arena, ARRACCESS, arraccess0_children, 2);
+    ASTNode ten_label = create_label(tm.arena, "10", 2);
+    ASTNode ten = create_box(tm.arena, INT_M, ten_label);
+    ASTNode assign0_children[] = {arraccess0, ten};
+    ASTNode assign0 = create_node(tm.arena, VARASSIGN, assign0_children, 2);
+
+    // arr[1] = 20;
+    ASTNode arr1_label = create_label(tm.arena, "arr", 3);
+    ASTNode arr1_id = create_box(tm.arena, ID_M, arr1_label);
+    ASTNode arr1_access_children[] = {arr1_id};
+    ASTNode arr1_access = create_node(tm.arena, ACCESS, arr1_access_children, 1);
+    ASTNode idx1_label = create_label(tm.arena, "1", 1);
+    ASTNode idx1 = create_box(tm.arena, INT_M, idx1_label);
+    ASTNode arraccess1_children[] = {arr1_access, idx1};
+    ASTNode arraccess1 = create_node(tm.arena, ARRACCESS, arraccess1_children, 2);
+    ASTNode twenty_label = create_label(tm.arena, "20", 2);
+    ASTNode twenty = create_box(tm.arena, INT_M, twenty_label);
+    ASTNode assign1_children[] = {arraccess1, twenty};
+    ASTNode assign1 = create_node(tm.arena, VARASSIGN, assign1_children, 2);
+
+    // arr[2] = 30;
+    ASTNode arr2_label = create_label(tm.arena, "arr", 3);
+    ASTNode arr2_id = create_box(tm.arena, ID_M, arr2_label);
+    ASTNode arr2_access_children[] = {arr2_id};
+    ASTNode arr2_access = create_node(tm.arena, ACCESS, arr2_access_children, 1);
+    ASTNode idx2_label = create_label(tm.arena, "2", 1);
+    ASTNode idx2 = create_box(tm.arena, INT_M, idx2_label);
+    ASTNode arraccess2_children[] = {arr2_access, idx2};
+    ASTNode arraccess2 = create_node(tm.arena, ARRACCESS, arraccess2_children, 2);
+    ASTNode thirty_label = create_label(tm.arena, "30", 2);
+    ASTNode thirty = create_box(tm.arena, INT_M, thirty_label);
+    ASTNode assign2_children[] = {arraccess2, thirty};
+    ASTNode assign2 = create_node(tm.arena, VARASSIGN, assign2_children, 2);
+
+    // return arr;
+    ASTNode arr_ret_label = create_label(tm.arena, "arr", 3);
+    ASTNode arr_ret = create_box(tm.arena, ID_M, arr_ret_label);
+    ASTNode arr_ret_access_children[] = {arr_ret};
+    ASTNode arr_ret_access = create_node(tm.arena, ACCESS, arr_ret_access_children, 1);
+    ASTNode return_children[] = {arr_ret_access};
+    ASTNode ret = create_node(tm.arena, RETURN, return_children, 1);
+
+    // function body
+    ASTNode body_children[] = {arr_decl, assign0, assign1, assign2, ret};
+    ASTNode body = create_node(tm.arena, STATLIST, body_children, 5);
+
+    // funcdecl
+    ASTNode funcdecl_children[] = {makeArr_id, parameters, ret_arrtype, body};
+    ASTNode funcdecl = create_node(tm.arena, FUNCDECL, funcdecl_children, 4);
+
+    // --- init int[] result <- makeArr(); ---
+    ASTNode res_type_val = create_value_box(tm.arena, 0);
+    ASTNode res_type_children[] = {res_type_val};
+    ASTNode res_prim = create_node(tm.arena, PRIMITIVETYPE, res_type_children, 1);
+    ASTNode res_arrtype_children[] = {res_prim};
+    ASTNode res_arrtype = create_node(tm.arena, ARRTYPE, res_arrtype_children, 1);
+    ASTNode res_label = create_label(tm.arena, "result", 6);
+    ASTNode res_id = create_box(tm.arena, ID_M, res_label);
+    ASTNode makeArr_ref_label = create_label(tm.arena, "makeArr", 7);
+    ASTNode makeArr_ref = create_box(tm.arena, ID_M, makeArr_ref_label);
+    ASTNode makeArr_access_children[] = {makeArr_ref};
+    ASTNode makeArr_access = create_node(tm.arena, ACCESS, makeArr_access_children, 1);
+    ASTNode arguments = create_node(tm.arena, ARGUMENTS, NULL, 0);
+    ASTNode funccall_children[] = {makeArr_access, arguments};
+    ASTNode funccall = create_node(tm.arena, FUNCCALL, funccall_children, 2);
+    ASTNode res_decl_children[] = {res_arrtype, res_id, funccall};
+    ASTNode res_decl = create_node(tm.arena, VARDECL, res_decl_children, 3);
+
+    // --- init int a <- result[0]; ---
+    ASTNode a_type_val = create_value_box(tm.arena, 0);
+    ASTNode a_type_children[] = {a_type_val};
+    ASTNode a_prim = create_node(tm.arena, PRIMITIVETYPE, a_type_children, 1);
+    ASTNode a_label = create_label(tm.arena, "a", 1);
+    ASTNode a_id = create_box(tm.arena, ID_M, a_label);
+    ASTNode arr_a_label = create_label(tm.arena, "result", 6);
+    ASTNode arr_a_id = create_box(tm.arena, ID_M, arr_a_label);
+    ASTNode arr_a_access_children[] = {arr_a_id};
+    ASTNode arr_a_access = create_node(tm.arena, ACCESS, arr_a_access_children, 1);
+    ASTNode idx_a_label = create_label(tm.arena, "0", 1);
+    ASTNode idx_a = create_box(tm.arena, INT_M, idx_a_label);
+    ASTNode arraccess_a_children[] = {arr_a_access, idx_a};
+    ASTNode arraccess_a = create_node(tm.arena, ARRACCESS, arraccess_a_children, 2);
+    ASTNode a_decl_children[] = {a_prim, a_id, arraccess_a};
+    ASTNode a_decl = create_node(tm.arena, VARDECL, a_decl_children, 3);
+
+    // --- init int b <- result[1]; ---
+    ASTNode b_type_val = create_value_box(tm.arena, 0);
+    ASTNode b_type_children[] = {b_type_val};
+    ASTNode b_prim = create_node(tm.arena, PRIMITIVETYPE, b_type_children, 1);
+    ASTNode b_label = create_label(tm.arena, "b", 1);
+    ASTNode b_id = create_box(tm.arena, ID_M, b_label);
+    ASTNode arr_b_label = create_label(tm.arena, "result", 6);
+    ASTNode arr_b_id = create_box(tm.arena, ID_M, arr_b_label);
+    ASTNode arr_b_access_children[] = {arr_b_id};
+    ASTNode arr_b_access = create_node(tm.arena, ACCESS, arr_b_access_children, 1);
+    ASTNode idx_b_label = create_label(tm.arena, "1", 1);
+    ASTNode idx_b = create_box(tm.arena, INT_M, idx_b_label);
+    ASTNode arraccess_b_children[] = {arr_b_access, idx_b};
+    ASTNode arraccess_b = create_node(tm.arena, ARRACCESS, arraccess_b_children, 2);
+    ASTNode b_decl_children[] = {b_prim, b_id, arraccess_b};
+    ASTNode b_decl = create_node(tm.arena, VARDECL, b_decl_children, 3);
+
+    // --- init int c <- result[2]; ---
+    ASTNode c_type_val = create_value_box(tm.arena, 0);
+    ASTNode c_type_children[] = {c_type_val};
+    ASTNode c_prim = create_node(tm.arena, PRIMITIVETYPE, c_type_children, 1);
+    ASTNode c_label = create_label(tm.arena, "c", 1);
+    ASTNode c_id = create_box(tm.arena, ID_M, c_label);
+    ASTNode arr_c_label = create_label(tm.arena, "result", 6);
+    ASTNode arr_c_id = create_box(tm.arena, ID_M, arr_c_label);
+    ASTNode arr_c_access_children[] = {arr_c_id};
+    ASTNode arr_c_access = create_node(tm.arena, ACCESS, arr_c_access_children, 1);
+    ASTNode idx_c_label = create_label(tm.arena, "2", 1);
+    ASTNode idx_c = create_box(tm.arena, INT_M, idx_c_label);
+    ASTNode arraccess_c_children[] = {arr_c_access, idx_c};
+    ASTNode arraccess_c = create_node(tm.arena, ARRACCESS, arraccess_c_children, 2);
+    ASTNode c_decl_children[] = {c_prim, c_id, arraccess_c};
+    ASTNode c_decl = create_node(tm.arena, VARDECL, c_decl_children, 3);
+
+    // StatList
+    ASTNode stat_children[] = {funcdecl, res_decl, a_decl, b_decl, c_decl};
+    ASTNode statlist = create_node(tm.arena, STATLIST, stat_children, 5);
     // print AST
     print_ast(statlist, "", true, NULL);
 
     // evaluate
-    SymbolsManager* manager = create_symbols_manager();
+    SymbolsManager* manager = create_symbols_manager(false);
     Arena* eval_arena = arena_create(LOCAL_ARENA_SIZE);
 
     EvalPass result = evaluate(manager, &statlist, eval_arena);

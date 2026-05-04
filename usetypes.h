@@ -34,7 +34,8 @@ enum NodeClass{
     DIVISION,
     ARRACCESS,
     FUNCCALL,
-    PROPERTYACCESS
+    PROPERTYACCESS,
+    ACCESS,
 };
 
 typedef enum {
@@ -59,17 +60,26 @@ typedef enum {
 typedef enum {
     KIND_PRIMITIVE,
     KIND_ARRAY,
+    KIND_POINTER,
 } TypeKind;
+
+struct ArrType{
+    TypeTag elem_type;
+    int sizes[MAX_DIMS];
+    int ndims;
+};
+
+struct PtrType{
+    struct Type* pointee_type;
+    bool unpack;
+};
 
 typedef struct Type {
     TypeKind kind;
     union {
         TypeTag primitive_tag;
-        struct {
-            TypeTag elem_type;
-            int sizes[MAX_DIMS];
-            int ndims;
-        } ArrType;
+        struct ArrType array;
+        struct PtrType pointer;
     };
 } Type;
 
@@ -85,11 +95,11 @@ enum ValTag{
 typedef struct VValue {
     enum ValTag vv_tag;
     union {
-        int    value_int;
+        int value_int;
         float value_float;
-        bool   value_bool;
-        char  *value_string;
-        void  *value_ptr;
+        bool value_bool;
+        char *value_string;
+        void *value_ptr;
     };
 } VValue;
 
@@ -118,10 +128,10 @@ typedef struct Args {
     int amount;
 } Args;
 
-typedef struct Identifier {
-    char* name;
-    VValue storage;
-} Identifier;
+typedef struct CentralAccess {
+    VValue* link;
+    bool view;
+} CentralAccess;
 
 enum AnyEnum{
     UNDEFINED_TYPE,
@@ -131,7 +141,7 @@ enum AnyEnum{
     SPAR_TYPE,
     ARGS_TYPE,
     SIGNAL_TYPE,
-    IDENTIFIER_TYPE,
+    ACCESS_TYPE,
 };
 
 typedef struct EvalPass{
@@ -143,7 +153,7 @@ typedef struct EvalPass{
         Argument as_spar;
         Args as_args;
         Signal as_signal;
-        Identifier as_identifier;
+        CentralAccess as_access;
     };
     enum NodeClass nclass;
 } EvalPass;
@@ -164,6 +174,7 @@ typedef struct SymbolsManager{
     SymbolsTable* root;
     SymbolsTable** stack;
     int attribute_capacity;
+    bool production;
 } SymbolsManager;
 
 

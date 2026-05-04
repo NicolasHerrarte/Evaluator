@@ -51,7 +51,10 @@ SymbolsTable* finalizeScope(SymbolsManager* manager) {
     // untested
     
     // this doesnt allow testing so I will remove for now but it shoul not be a comment
-    //dynadict_destroy(removed->hash);
+    if(manager->production){
+        dynadict_destroy(removed->hash);
+    }
+    
 
     if(dynarray_length(manager->stack) > 0){
         return dynarray_get_last(manager->stack);
@@ -71,6 +74,15 @@ void initializeIdentifier(SymbolsManager* manager, char* identifier){
     }
     bool already_defined = dynadict_add(current_scope->hash, identifier, hard_storage);
     assert(!already_defined);
+}
+
+VValue* getSoftStorage(SymbolsManager* manager, Arena* local_arena){
+    VValue* soft_storage = arena_get(local_arena, manager->attribute_capacity*sizeof(VValue));
+    for(int i = 0;i<manager->attribute_capacity;i++){
+        soft_storage[i].vv_tag = VV_UNDEFINED;
+    }
+
+    return soft_storage;
 }
 
 VValue* getIdentifierStorage(SymbolsManager* manager, char* identifier){
@@ -154,7 +166,7 @@ VValue* findStorage(SymbolsManager* manager, char* identifier, char* attribute){
     return NULL;
 }
 
-SymbolsManager* initializeSymbols(int attr_cap){
+SymbolsManager* initializeSymbols(int attr_cap, bool ini_production){
     SymbolsManager* manager = malloc(sizeof(SymbolsManager));
     manager->arena = arena_create(SYMBOLS_CHUNK_SIZE*(sizeof(SymbolsTable)+sizeof(Hash)));
     manager->global_arena = arena_create(LOCAL_ARENA_SIZE);
@@ -166,5 +178,99 @@ SymbolsManager* initializeSymbols(int attr_cap){
     manager->index_hash = index_hash_storage;
     //manager->index_hash = dynadict_create(DYNADICT_DEFAULT_CAPACITY, int);
     manager->attribute_capacity = attr_cap;
+    manager->production = ini_production;
     return manager;
+}
+
+void print_symbols_table(SymbolsManager* manager, SymbolsTable* table, char* st_name, int depth) {
+    if (!manager || !table || !table->hash) return;
+
+    char**   identifiers = dynadict_list_indexes(table->hash);
+    VValue** storage     = (VValue**)hash_to_list(table->hash);
+
+    if (!identifiers || !storage) return;
+
+    char indent[128] = "";
+    for (int i = 0; i < depth; i++)
+        strncat(indent, "    ", sizeof(indent) - strlen(indent) - 1);
+
+    #define MAX_LINES    256
+    #define MAX_LINE_LEN 256
+    char lines[MAX_LINES][MAX_LINE_LEN];
+    int  line_count = 0;
+    int  max_width  = 0;
+
+    snprintf(lines[line_count], MAX_LINE_LEN, " SYMBOLS TABLE: %s ", st_name);
+    max_width = strlen(lines[line_count]);
+    line_count++;
+
+    int n     = table->hash->count;
+    int nattr = manager->index_hash->count;
+
+    char** attr_keys = dynadict_list_indexes(manager->index_hash);
+
+    for (int i = 0; i < n; i++) {
+        VValue* slots = storage[i];
+
+        /* identifier header line */
+        snprintf(lines[line_count], MAX_LINE_LEN, " %s :", identifiers[i]);
+        if ((int)strlen(lines[line_count]) > max_width) max_width = strlen(lines[line_count]);
+        line_count++;
+
+        for (int a = 0; a < nattr; a++) {
+            if (slots[a].vv_tag == VV_UNDEFINED) continue;
+
+            /* reverse lookup attribute name */
+            char* attr_name = NULL;
+            for (int k = 0; k < nattr; k++) {
+                int* idx = dynadict_get(manager->index_hash, attr_keys[k]);
+                if (idx && *idx == a) { attr_name = attr_keys[k]; break; }
+            }
+
+            char val_buf[64];
+            switch (slots[a].vv_tag) {
+                case VV_INT:    snprintf(val_buf, sizeof(val_buf), "%d",      slots[a].value_int);                              break;
+                case VV_FLOAT:  snprintf(val_buf, sizeof(val_buf), "%.2f",    slots[a].value_float);                            break;
+                case VV_BOOL:   snprintf(val_buf, sizeof(val_buf), "%s",      slots[a].value_bool ? "true" : "false");          break;
+                case VV_STRING: snprintf(val_buf, sizeof(val_buf), "\"%s\"",  slots[a].value_string ? slots[a].value_string : "null"); break;
+                case VV_PTR:    snprintf(val_buf, sizeof(val_buf), "ptr(%p)", slots[a].value_ptr);                              break;
+                default:        snprintf(val_buf, sizeof(val_buf), "???");                                                       break;
+            }
+
+            if (attr_name)
+                snprintf(lines[line_count], MAX_LINE_LEN, "     %s = %s", attr_name, val_buf);
+            else
+                snprintf(lines[line_count], MAX_LINE_LEN, "     [%d] = %s", a, val_buf);
+
+            if ((int)strlen(lines[line_count]) > max_width) max_width = strlen(lines[line_count]);
+            line_count++;
+        }
+    }
+
+    /* draw box */
+    char bar[MAX_LINE_LEN];
+    memset(bar, '-', max_width + 2);
+    bar[max_width + 2] = '\0';
+
+    printf("\n");
+    printf("%s+%s+\n", indent, bar);
+    for (int i = 0; i < line_count; i++) {
+        if (i == 1) printf("%s+%s+\n", indent, bar);
+        printf("%s| %-*s |\n", indent, max_width, lines[i]);
+    }
+    printf("%s+%s+\n", indent, bar);
+    printf("\n");
+}
+
+void print_symbols_tree_recursive(SymbolsManager* manager, SymbolsTable* table, char* name, int depth) {
+    if (!manager || !table) return;
+    print_symbols_table(manager, table, name, depth);
+    if (table->child)   print_symbols_tree_recursive(manager, table->child,   "Child",   depth + 1);
+    if (table->sibling) print_symbols_tree_recursive(manager, table->sibling, "Sibling", depth);
+}
+
+void print_symbols_tree(SymbolsManager* manager, SymbolsTable* root, char* root_name) {
+    printf("═══════════════ SCOPE TREE ═══════════════\n");
+    print_symbols_tree_recursive(manager, root, root_name, 0);
+    printf("══════════════════════════════════════════\n");
 }
